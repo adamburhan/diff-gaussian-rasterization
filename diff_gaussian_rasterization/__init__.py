@@ -77,7 +77,9 @@ class _RasterizeGaussians(torch.autograd.Function):
             raster_settings.campos,
             raster_settings.prefiltered,
             raster_settings.antialiasing,
-            raster_settings.debug
+            raster_settings.debug,
+            raster_settings.target_depth if raster_settings.target_depth is not None else means3D.new_empty(0),
+            raster_settings.target_sigma if raster_settings.target_sigma is not None else means3D.new_empty(0),
         )
 
         # Invoke C++/CUDA rasterizer
@@ -121,7 +123,9 @@ class _RasterizeGaussians(torch.autograd.Function):
                 binningBuffer,
                 imgBuffer,
                 raster_settings.antialiasing,
-                raster_settings.debug)
+                raster_settings.debug,
+                raster_settings.target_depth if raster_settings.target_depth is not None else means3D.new_empty(0),
+                raster_settings.target_sigma if raster_settings.target_sigma is not None else means3D.new_empty(0))
 
         # Compute gradients for relevant tensors by invoking backward method
         grad_means2D, grad_colors_precomp, grad_opacities, grad_means3D, grad_cov3Ds_precomp, grad_sh, grad_scales, grad_rotations = _C.rasterize_gaussians_backward(*args)        
@@ -154,6 +158,9 @@ class GaussianRasterizationSettings(NamedTuple):
     prefiltered : bool
     debug : bool
     antialiasing : bool
+    # With fixed target images, the third output is sum(T*alpha*kernel(z,d)), not inverse depth.
+    target_depth: torch.Tensor = None
+    target_sigma: torch.Tensor = None
 
 class GaussianRasterizer(nn.Module):
     def __init__(self, raster_settings):
@@ -174,6 +181,15 @@ class GaussianRasterizer(nn.Module):
     def forward(self, means3D, means2D, opacities, shs = None, colors_precomp = None, scales = None, rotations = None, cov3D_precomp = None):
         
         raster_settings = self.raster_settings
+        target, sigma = raster_settings.target_depth, raster_settings.target_sigma
+        if (target is None) != (sigma is None):
+            raise ValueError("target_depth and target_sigma must be supplied together")
+        if target is not None:
+            for value in (target, sigma):
+                if (value.shape != (1, raster_settings.image_height, raster_settings.image_width)
+                        or value.device != means3D.device or value.dtype != torch.float32
+                        or not value.is_contiguous() or value.requires_grad):
+                    raise ValueError("probe targets must be fixed contiguous float32 [1,H,W] images on the Gaussian device")
 
         if (shs is None and colors_precomp is None) or (shs is not None and colors_precomp is not None):
             raise Exception('Please provide excatly one of either SHs or precomputed colors!')

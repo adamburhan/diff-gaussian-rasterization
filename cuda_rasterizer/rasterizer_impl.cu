@@ -219,7 +219,9 @@ int CudaRasterizer::Rasterizer::forward(
 	float* depth,
 	bool antialiasing,
 	int* radii,
-	bool debug)
+	bool debug,
+	const float* target_depth,
+	const float* target_sigma)
 {
 	const float focal_y = height / (2.0f * tan_fovy);
 	const float focal_x = width / (2.0f * tan_fovx);
@@ -335,7 +337,7 @@ int CudaRasterizer::Rasterizer::forward(
 		background,
 		out_color,
 		geomState.depths,
-		depth), debug)
+		depth, target_depth, target_sigma), debug)
 
 	return num_rendered;
 }
@@ -375,7 +377,9 @@ void CudaRasterizer::Rasterizer::backward(
 	float* dL_dscale,
 	float* dL_drot,
 	bool antialiasing,
-	bool debug)
+	bool debug,
+	const float* target_depth,
+	const float* target_sigma)
 {
 	GeometryState geomState = GeometryState::fromChunk(geom_buffer, P);
 	BinningState binningState = BinningState::fromChunk(binning_buffer, R);
@@ -415,7 +419,7 @@ void CudaRasterizer::Rasterizer::backward(
 		(float4*)dL_dconic,
 		dL_dopacity,
 		dL_dcolor,
-		dL_dinvdepth), debug);
+		dL_dinvdepth, target_depth, target_sigma), debug);
 
 	// Take care of the rest of preprocessing. Was the precomputed covariance
 	// given to us or a scales/rot pair? If precomputed, pass that. If not,

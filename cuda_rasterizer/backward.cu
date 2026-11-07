@@ -468,7 +468,9 @@ renderCUDA(
 	float4* __restrict__ dL_dconic2D,
 	float* __restrict__ dL_dopacity,
 	float* __restrict__ dL_dcolors,
-	float* __restrict__ dL_dinvdepths
+	float* __restrict__ dL_dinvdepths,
+	const float* __restrict__ target_depth,
+	const float* __restrict__ target_sigma
 )
 {
 	// We rasterize again. Compute necessary block info.
@@ -596,11 +598,16 @@ renderCUDA(
 			// per Gaussian inverse depths
 			if (dL_dinvdepths)
 			{
-			const float invd = 1.f / collected_depths[j];
+			const float z = collected_depths[j];
+			const float residual = target_depth ? (z - target_depth[pix_id]) / target_sigma[pix_id] : 0.f;
+			const float invd = target_depth ? expf(-0.5f * residual * residual) : 1.f / z;
+			// This scratch gradient is dL/d(1/z); preprocess applies -1/z^2.
+			// The conversion preserves the direct kernel-depth gradient as well as alpha gradients.
+			const float derivative = target_depth ? invd * residual * z * z / target_sigma[pix_id] : 1.f;
 			accum_invdepth_rec = last_alpha * last_invdepth + (1.f - last_alpha) * accum_invdepth_rec;
 			last_invdepth = invd;
 			dL_dalpha += (invd - accum_invdepth_rec) * dL_invdepth;
-			atomicAdd(&(dL_dinvdepths[global_id]), dchannel_dcolor * dL_invdepth);
+			atomicAdd(&(dL_dinvdepths[global_id]), dchannel_dcolor * dL_invdepth * derivative);
 			}
 
 			dL_dalpha *= T;
@@ -614,6 +621,9 @@ renderCUDA(
 				bg_dot_dpixel += bg_color[i] * dL_dpixel[i];
 			dL_dalpha += (-T_final / (1.f - alpha)) * bg_dot_dpixel;
 
+
+			if (target_depth && con_o.w * G >= 0.99f)
+				dL_dalpha = 0.f;
 
 			// Helpful reusable temporary variables
 			const float dL_dG = con_o.w * dL_dalpha;
@@ -729,7 +739,9 @@ void BACKWARD::render(
 	float4* dL_dconic2D,
 	float* dL_dopacity,
 	float* dL_dcolors,
-	float* dL_dinvdepths)
+	float* dL_dinvdepths,
+	const float* target_depth,
+	const float* target_sigma)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> >(
 		ranges,
@@ -748,6 +760,6 @@ void BACKWARD::render(
 		dL_dconic2D,
 		dL_dopacity,
 		dL_dcolors,
-		dL_dinvdepths
+		dL_dinvdepths, target_depth, target_sigma
 		);
 }

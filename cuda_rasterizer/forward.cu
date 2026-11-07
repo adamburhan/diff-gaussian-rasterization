@@ -285,7 +285,9 @@ renderCUDA(
 	const float* __restrict__ bg_color,
 	float* __restrict__ out_color,
 	const float* __restrict__ depths,
-	float* __restrict__ invdepth)
+	float* __restrict__ invdepth,
+	const float* __restrict__ target_depth,
+	const float* __restrict__ target_sigma)
 {
 	// Identify current tile and associated min/max pixel range.
 	auto block = cg::this_thread_block();
@@ -371,8 +373,12 @@ renderCUDA(
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
 
-			if(invdepth)
-			expected_invdepth += (1 / depths[collected_id[j]]) * alpha * T;
+			if (invdepth) {
+				const float z = depths[collected_id[j]];
+				const float residual = target_depth ? (z - target_depth[pix_id]) / target_sigma[pix_id] : 0.f;
+				const float feature = target_depth ? expf(-0.5f * residual * residual) : 1.f / z;
+				expected_invdepth += feature * alpha * T;
+			}
 
 			T = test_T;
 
@@ -409,7 +415,9 @@ void FORWARD::render(
 	const float* bg_color,
 	float* out_color,
 	float* depths,
-	float* depth)
+	float* depth,
+	const float* target_depth,
+	const float* target_sigma)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
 		ranges,
@@ -423,7 +431,7 @@ void FORWARD::render(
 		bg_color,
 		out_color,
 		depths, 
-		depth);
+		depth, target_depth, target_sigma);
 }
 
 void FORWARD::preprocess(int P, int D, int M,
